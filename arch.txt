@@ -1,0 +1,213 @@
+CPU Architecture
+
+== Overview ==
+
+16-bit data bus
+16-bit address bus
+
+2 control signals:
+ - read
+ - write
+
+8 registers:
+ 0 = $ra return address
+ 1 = $sp stack pointer
+ 2 = $t0 temp register
+ 3 = $t1 temp register
+ 4 = $s0 system register
+ 5 = $s1 system register
+ 6 = $s2 system register
+ 7 = $s3 system register
+
+2 other registers:
+ - $ir instruction register
+ - $im immediate value register
+
+== Instruction Format ==
+
+7-bit opcode
+3-bit rd
+3-bit rs
+3-bit rt
+
+If immediate value, then the next word is the value.
+
+== Operations ==
+
+( ~ denotes implemented )
+
+System:
+
+~00 NOOP
+
+Memory:
+
+~04 LW   rd, rs              # Load word into $rd from address in $rs
+~05 SW   rs  rt              # Store word from $rt into address in $rs
+~06 LI   rd, imm             # Load immediate value into $rd
+~07 LWO  rd, rs, imm         # Load word into $rd from address in ($rs + imm)
+~08 SWO  rs, rt, imm         # Store word from $rt into address in ($rs + imm)
+ 
+ALU:
+ 
+~10 ADD  rd, rs, rt          # $rd = $rs + $rt
+~11 SUB  rd, rs, rt          # $rd = $rs - $rt
+ 
+~12 AND  rd, rs, rt          # $rd =   $rs & $rt
+~13 NAND rd, rs  rt          # $rd = ~($rs & $rt)
+~14 OR   rd, rs, rt          # $rd =   $rs | $rt
+~15 NOR  rd, rs, rt          # $rd = ~($rs | $rt)
+~16 XOR  rd, rs, rt          # $rd =   $rs ^ $rt
+
+~18 SFTL rd, rs, imm         # $rd = $rs << imm
+~19 SFTR rd, rs, imm         # $rd = $rs >> imm
+
+~1A ADDI rd, rs, imm         # $rd = $rs + imm
+~1B SUBI rd, rs, imm         # $rd = $rs - imm
+
+~20 INC  rd, rs              # $rd = $rs + 1
+~21 DEC  rd, rs              # $rd = $rs - 1
+ 
+Jumping:
+ 
+~30 JMP  imm                 # $pc = imm
+~31 JR   rs                  # $pc = $rs
+~32 JPI  imm                 # $pc = value at imm
+~33 JRI  rs                  # $pc = value at $rs
+ 
+Branching:
+ 
+~40 BEQ  rs, rt, imm         # $pc = imm if $rs == $rt
+~41 BZ   rs, imm             # $pc = imm if $rs == 0
+~42 BNG  rs, imm             # $pc = imm if $rs < 0
+
+== ALU Design Requirements ==
+
+ALU has two 16-bit inputs, A and B.
+ALU has one 16-it output, RES.
+
+4-bit OP selection input.
+
+Operations:
+ 0 ADD
+ 1 SUB
+ 2 AND
+ 3 NAND
+ 4 OR
+ 5 NOR
+ 6 XOR
+ 8 Shift Left
+ 9 Shift Right
+ A Passthrough A
+ B Passthrough B
+
+Output flags:
+ - Zero
+
+== Control Requirements ==
+
+Inputs:
+ - 7-bit opcode
+ - 1-bit zero flag
+ - 1-bit negative flag
+
+Ouputs control signals.
+Maintains internal state as per microcode.
+
+== Register File Requirements ==
+
+16-bit input D
+16-bit output RS
+16-bit output RT
+
+3-bit select D
+3-bit select RS
+3-bit select RT
+
+== Register Transfers ==
+
+IR Source:
+ - Data bus
+
+PC Sources:
+ 0 RES (for increments)
+ 1 RS (for jump)
+ 2 Data bus (jump immediate, branch)
+ 3 IMM register (jump indirect)
+
+ALU OP Sources:
+ 0 Control ALU OP
+ 1 From instr opcode
+
+ALU A Sources:
+ 0 RS (for ALU ops)
+ 1 PC (for PC increments)
+
+ALU B Sources:
+ 0 RT (for ALU ops)
+ 1 literal 1
+ 2 literal 2
+ 3 IMM
+
+IMM Source:
+ - Data bus
+
+RD Sources:
+ 0 Data bus (loads)
+ 1 IMM (immediate loads)
+ 2 RES (for immediate alu ops)
+
+Address Bus Sources:
+ 0 PC
+ 1 RS (for indirect loading)
+ 2 RES (for immediate loading)
+ 3 IMM (for indirect loading)
+
+Data Bus Source:
+ - RT (for storing)
+
+== Control Requirements ==
+
+Inputs: (9 bits)
+ 7-bit opcode
+ 1-bit zero
+ 1-bit negative
+
+Outputs: (19 bits)
+ 1-bit read
+ 1-bit write
+ 1-bit register write
+ 1-bit IMM write
+ 1-bit IR write
+ 1-bit PC write
+ 1-bit Flags write
+ 2-bit Address select
+ 2-bit B select
+ 2-bit PC select
+ 1-bit RD input select
+ 1-bit A select
+ 1-bit ALU OP select
+ 4-bit ALU OP
+
+== Control Design ==
+
+State will be 5 bits for 32 possible states.
+
+Decision ROM Input: (14 bits)
+ 7-bit opcode
+ 1-bit zero
+ 1-bit negative
+ 5-bit current state
+
+Decision ROM Output: (5 bits)
+ 5-bit next state
+
+Control ROM Input: (5 bits)
+ 5-bit current sate
+
+Control ROM Output: (19 bits)
+ 19-bit control lines (see above)
+
+Decision ROM has 14-bit address bus and 8-bit data bus.
+Control ROM has 5-bit address bus and 32-bit data bus.
+
