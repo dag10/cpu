@@ -1,0 +1,518 @@
+{
+  platform: {
+    word_size: 16,
+
+    opcode_size: 7, // 128 opcodes
+    opcodes: {
+      'NOOP': 0x00,
+
+      'LW'  : 0x04,
+      'SW'  : 0x05,
+      'LI'  : 0x06,
+      'LWO' : 0x07,
+      'SWO' : 0x08,
+
+      'ADD' : 0x10,
+      'SUB' : 0x11,
+
+      'AND' : 0x12,
+      'NAND': 0x13,
+      'OR'  : 0x14,
+      'NOR' : 0x15,
+      'XOR' : 0x16,
+      
+      'SFTL': 0x18,
+      'SFTR': 0x19,
+
+      'ADDI': 0x1A,
+      'SUBI': 0x1B,
+
+      'INC' : 0x20,
+      'DEC' : 0x21,
+
+      'JMP' : 0x30,
+      'JR'  : 0x31,
+      'JPI' : 0x32,
+      'JRI' : 0x33,
+
+      'BEQ' : 0x40,
+      'BZ'  : 0x41,
+      'BNG' : 0x42,
+    },
+
+    flags: [
+      'zero',
+      'negative',
+    ],
+
+    state_size: 5, // 32 states
+    
+    controls: [
+      {
+        name: 'read',
+        type: 'boolean',
+      },
+      {
+        name: 'write',
+        type: 'boolean',
+      },
+      {
+        name: 'register_write',
+        type: 'boolean',
+      },
+      {
+        name: 'imm_write',
+        type: 'boolean',
+      },
+      {
+        name: 'ir_write',
+        type: 'boolean',
+      },
+      {
+        name: 'pc_write',
+        type: 'boolean',
+      },
+      {
+        name: 'flags_write',
+        type: 'boolean',
+      },
+      {
+        name: 'address_select',
+        type: 'int',
+        bits: 2,
+      },
+      {
+        name: 'b_select',
+        type: 'int',
+        bits: 2,
+      },
+      {
+        name: 'pc_select',
+        type: 'int',
+        bits: 2,
+      },
+      {
+        name: 'rd_input_select',
+        type: 'int',
+        bits: 2,
+      },
+      {
+        name: 'a_select',
+        type: 'int',
+        bits: 1,
+      },
+      {
+        name: 'alu_op_select',
+        type: 'int',
+        bits: 1,
+      },
+      {
+        name: 'alu_op',
+        type: 'int',
+        bits: 4,
+      },
+    ],
+  },
+
+  states: {
+  
+    /* ==== Basic Microcode Instructions ==== */
+  
+    // Initial state, for loading initial PC.
+    // No operation.
+    'INIT': {
+      control: {},
+      next: 'FETCH_DECODE',
+    },
+  
+    // Reads off of the data bus into the instruction register.
+    // IR = *PC
+    // Branches based on opcode.
+    'FETCH_DECODE': {
+      control: {
+        address_select: 0, // PC
+        read: true,
+        ir_write: true,
+      },
+      next: [
+        {
+          opcodes: ['NOOP'],
+          state: 'INC_PC',
+        },
+        {
+          opcodes: ['LI'],
+          state: 'LOAD_IMMEDIATE',
+        },
+        {
+          opcodes: ['JMP'],
+          state: 'JUMP_IMMEDIATE',
+        },
+        {
+          opcodes: ['JR'],
+          state: 'JUMP_REGISTER',
+        },
+        {
+          opcodes: ['LW'],
+          state: 'LOAD_WORD',
+        },
+        {
+          opcodes: ['SW'],
+          state: 'STORE_WORD',
+        },
+        {
+          opcodes: ['BEQ'],
+          state: 'BRANCH_IF_EQUAL',
+        },
+        {
+          opcodes: ['BZ, BNG'],
+          state: 'BRANCH_ZERO_OR_NEGATIVE',
+        },
+        {
+          opcodes: ['ADDI', 'SUBI', 'SFTL', 'SFTR', 'JPI', 'LWO', 'SWO'],
+          state: 'FETCH_IMMEDIATE',
+        },
+        {
+          opcodes: ['JRI'],
+          state: 'JUMP_INDIRECT_FROM_RS',
+        },
+        {
+          opcodes: ['ADD', 'SUB', 'AND', 'NAND', 'OR', 'NOR', 'XOR'],
+          state: 'ALU_INSTR',
+        },
+        {
+          opcodes: ['INC', 'DEC'],
+          state: 'ALU_OP_ONE',
+        },
+        {
+          // Default, behave like no-op.
+          state: 'INC_PC',
+        }
+      ],
+    },
+  
+    // Increments the program counter then continues with fetch.
+    // PC = PC + 1
+    'INC_PC': {
+      control: {
+        a_select: 1, // PC
+        b_select: 1, // 1
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        pc_select: 0, // result
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    // Increments the program counter by two, the continues with fetch.
+    // PC = PC + 2
+    'INC_PC_TWICE': {
+      control: {
+        a_select: 1, // PC
+        b_select: 2, // 2
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        pc_select: 0, // result
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    /* ==== Utility Steps ==== */
+  
+    // Fetches an immediate value into the IMM register, then branches.
+    // IMM = *(PC + 1)
+    'FETCH_IMMEDIATE': {
+      control: {
+        a_select: 1, // PC
+        b_select: 1, // 1
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        address_select: 2, // result
+        read: true,
+        imm_write: true,
+      },
+      next: [
+        {
+          opcodes: ['ADDI'],
+          state: 'ADD_IMMEDIATE',
+        },
+        {
+          opcodes: ['SUBI'],
+          state: 'SUBTRACT_IMMEDIATE',
+        },
+        {
+          opcodes: ['SFTL', 'SFTR'],
+          state: 'ALU_INSTR_IMM',
+        },
+        {
+          opcodes: ['JPI'],
+          state: 'JUMP_INDIRECT',
+        },
+        {
+          opcodes: ['LWO'],
+          state: 'LOAD_WORD_WITH_OFFSET',
+        },
+        {
+          opcodes: ['SWO'],
+          state: 'STORE_WORD_WITH_OFFSET',
+        },
+      ],
+    },
+  
+    /* ==== Instruction Steps ==== */
+  
+    // Stores IMM value in RD register.
+    // RD = IMM
+    'LOAD_IMMEDIATE': {
+      control: {
+        a_select: 1, // PC
+        b_select: 1, // 1
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        address_select: 2, // result
+        read: true,
+        rd_input_select: 0, // data bus
+        register_write: true,
+      },
+      next: [
+        {
+          state: 'INC_PC_TWICE',
+        },
+      ]
+    },
+  
+    // Fetches the value at the address in RS, storing it in PC.
+    // PC = *RS
+    'JUMP_INDIRECT_FROM_RS': {
+      control: {
+        address_select: 1, // RS
+        read: true,
+        pc_select: 2, // data bus
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    // Loads a word with an added offset.
+    // RD = *(RS + IMM)
+    'LOAD_WORD_WITH_OFFSET': {
+      control: {
+        a_select: 0, // RS
+        b_select: 3, // IMM
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        address_select: 2, // result
+        rd_input_select: 0, // data bus
+        register_write: true,
+      },
+      next: 'INC_PC_TWICE',
+    },
+  
+    // Stores a word with an added offset.
+    // *(RS + IMM) = RT
+    'STORE_WORD_WITH_OFFSET': {
+      control: {
+        a_select: 0, // RS
+        b_select: 3, // IMM
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        address_select: 2, // result
+        write: true,
+      },
+      next: 'INC_PC_TWICE',
+    },
+  
+    // Jumps to the address in the IMM register.
+    // PC = *(PC + 1)
+    'JUMP_IMMEDIATE': {
+      control: {
+        a_select: 1, // PC
+        b_select: 1, // 1
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        address_select: 2, // result
+        read: true,
+        pc_select: 2, // data bus
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    // Jumps to a value in the RS register.
+    // PC = RS
+    'JUMP_REGISTER': {
+      control: {
+        pc_select: 1, // RS
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    // Jumps to the value at the address in IMM.
+    // PC = *IMM
+    'JUMP_INDIRECT': {
+      control: {
+        address_select: 3, // IMM
+        read: true,
+        pc_select: 2, // data bus
+        pc_write: true,
+      },
+      next: 'FETCH_DECODE',
+    },
+  
+    // Stores a word from the RD register into the address in RS.
+    // RD = *RS
+    'LOAD_WORD': {
+      control: {
+        address_select: 1, // RS
+        read: true,
+        rd_input_select: 0, // data bus
+        register_write: true,
+      },
+      next: 'INC_PC',
+    },
+  
+    // Stores a word from the RT register into the address in RS.
+    // *RS = RT
+    'STORE_WORD': {
+      control: {
+        address_select: 1, // RS
+        write: true,
+      },
+      next: 'INC_PC',
+    },
+  
+    // Subtracts RS and RT, storing the zero and negative flags.
+    // ZERO = (rs - rt) == 0
+    // MINUS = (rs - rt) < 0
+    // If ZERO: goto JUMP_IMMEDIATE
+    // Else:    goto INC_PC_TWICE
+    'BRANCH_IF_EQUAL': {
+      control: {
+        a_select: 0, // RS
+        b_select: 0, // RT
+        alu_op_select: 0, // manual opcode
+        alu_op: 1, // subtract
+        flags_write: true,
+      },
+      next: [
+        {
+          opcodes: ['BEQ'],
+          zero: true,
+          state: 'JUMP_IMMEDIATE',
+        },
+        {
+          opcodes: ['BEQ'],
+          zero: false,
+          state: 'INC_PC_TWICE',
+        },
+      ],
+    },
+  
+    // ZERO = rs == 0
+    // MINUS = rs < 0
+    // BZ: If ZERO: goto JUMP_IMMEDIATE
+    // BZ: Else:    goto INC_PC_TWICE
+    // BNG: If NEGATIVE: goto JUMP_IMMEDIATE
+    // BNG: Else:        goto INC_PC_TWICE
+    'BRANCH_ZERO_OR_NEGATIVE': {
+      control: {
+        a_select: 0, // RS
+        alu_op_select: 0, // manual opcode
+        alu_op: 0xA, // passthrough A
+        flags_write: true,
+      },
+      next: [
+        {
+          opcodes: ['BZ'],
+          zero: true,
+          state: 'JUMP_IMMEDIATE',
+        },
+        {
+          opcodes: ['BZ'],
+          zero: false,
+          state: 'INC_PC_TWICE',
+        },
+        {
+          opcodes: ['BNG'],
+          negative: true,
+          state: 'JUMP_IMMEDIATE',
+        },
+        {
+          opcodes: ['BNG'],
+          negative: false,
+          state: 'INC_PC_TWICE',
+        },
+      ],
+    },
+  
+    // Adds immediate value to a register, storing it.
+    // RD = RS + IMM
+    'ADD_IMMEDIATE': {
+      control: {
+        a_select: 0, // RS
+        b_select: 3, // IMM
+        alu_op_select: 0, // manual opcode
+        alu_op: 0, // add
+        rd_input_select: 2, // result
+        register_write: true,
+      },
+      next: 'INC_PC_TWICE',
+    },
+  
+    // Subtracts immediate value to a register, storing it.
+    // RD = RS - IMM
+    'SUBTRACT_IMMEDIATE': {
+      control: {
+        a_select: 0, // RS
+        b_select: 3, // IMM
+        alu_op_select: 0, // manual opcode
+        alu_op: 1, // subtract
+        rd_input_select: 2, // result
+        register_write: true,
+      },
+      next: 'INC_PC_TWICE',
+    },
+  
+    // Instruction involving the ALU, taking the ALU opcode from instr opcode.
+    // RD = RS <op> RT
+    'ALU_INSTR': {
+      control: {
+        a_select: 0, // RS
+        b_select: 0, // RT
+        alu_op_select: 1, // instruction's opcode
+        rd_input_select: 2, // result
+        register_write: true,
+      },
+      next: 'INC_PC',
+    },
+  
+    // Instruction involving the ALU and Immediate value.
+    // RD = RS <op> IMM
+    'ALU_INSTR_IMM': {
+      control: {
+        a_select: 0, // RS
+        b_select: 3, // IMM
+        alu_op_select: 1, // instruction's opcode
+        rd_input_select: 2, // result
+        register_write: true,
+      },
+      next: 'INC_PC_TWICE',
+    },
+    
+    // Instruction involving the ALU with the literal 1.
+    // RD = RS <op> 1
+    'ALU_OP_ONE': {
+      control: {
+        a_select: 0, // RS
+        b_select: 1, // 1
+        alu_op_select: 1, // instruction's opcode
+        rd_input_select: 2, // result
+        register_write: true,
+      },
+      next: 'INC_PC',
+    },
+  }
+}
+
